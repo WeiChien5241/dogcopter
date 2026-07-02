@@ -42,6 +42,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'mode_manager = flight_robot_pkg.mode_manager:main',
         ],
     },
 )

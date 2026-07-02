@@ -47,13 +47,16 @@ Then in the pxh shell: `commander takeoff` / `commander land`
 - [x] **M1 — Stable flight**: hybrid model takes off, hovers, lands
   (fixed July 2026; root causes documented in the debugging guide)
 - [x] **M1.5 — Ground driving**: DiffDrive works on the same model
-- [ ] **M2 — ROS bridge for the hybrid**: bridge `cmd_vel` / `odom` /
-  `joint_states` so the hybrid drives from ROS 2 (teleop), modeled on
-  `my_robot_bringup/config/gazebo_bridge.yaml`
-- [ ] **M3 — Mode arbitration**: GROUND/FLIGHT state node (ROS service).
-  GROUND forwards `/cmd_vel` to wheels and refuses arming; FLIGHT zeroes
-  wheels and hands control to PX4 via Micro XRCE-DDS + `px4_msgs`.
-  Demo: drive → transform → fly over obstacle → land → drive.
+- [x] **M2 — ROS bridge for the hybrid**: `ros2 launch flight_robot_pkg
+  flight_robot_bridge.launch.py` bridges `cmd_vel`/`odom`/`joint_states`/
+  `tf`/`clock`; `teleop_twist_keyboard` drives the robot
+- [x] **M3 — Mode arbitration**: `mode_manager` node (GROUND/FLIGHT via
+  `/dogcopter/set_flight_mode` SetBool service, state on `/dogcopter/mode`).
+  GROUND forwards `/cmd_vel` to the wheels; FLIGHT arms/takes off via
+  uXRCE-DDS (`px4_msgs`, pinned commit — see CLAUDE.md). Verified
+  drive → fly → drive commanded entirely from ROS 2.
+  Run: `MicroXRCEAgent udp4 -p 8888`, then
+  `ros2 launch flight_robot_pkg flight_robot_bringup.launch.py`
 - [ ] **M4 — Lidar + Nav2**: mount the lidar from `my_robot_description`
   on the hybrid, autonomous A→B navigation in GROUND mode
 - [ ] **M5 — Go2 quadruped base** (large effort — ros2_control +

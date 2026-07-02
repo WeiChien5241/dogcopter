@@ -25,8 +25,13 @@ commander takeoff / commander land
 param set NAV_DLL_ACT 0        # runtime-only: bypass no-GCS arming block when headless; never bake into the airframe
 listener actuator_motors       # hover ≈ 0.55–0.65, all four symmetric; visual prop speed is meaningless (rotorVelocitySlowdownSim)
 
-# Ground driving of the hybrid (no ROS bridge yet)
-gz topic -t /model/flight_robot_0/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.5}'
+# Ground driving of the hybrid from ROS 2 (M2 bridge)
+ros2 launch flight_robot_pkg flight_robot_bridge.launch.py   # then teleop_twist_keyboard on /cmd_vel
+
+# Full mode-arbitrated stack (M3): agent + bridge + mode_manager
+MicroXRCEAgent udp4 -p 8888        # Terminal 0 (installed at /usr/local/bin)
+ros2 launch flight_robot_pkg flight_robot_bringup.launch.py
+ros2 service call /dogcopter/set_flight_mode std_srvs/srv/SetBool "{data: true}"   # fly (false = land); watch /dogcopter/mode
 
 # Ground-only bot
 ros2 launch my_robot_bringup my_robot_gazebo.launch.py
@@ -60,6 +65,14 @@ The PX4 tree at `~/PX4-Autopilot` is **never modified**; `link_setup.sh` symlink
 - Keep thrust-to-weight ≥ 2.0. Current budget: 3.41 kg total, motorConstant 2.0e-05 → 80 N, T/W ≈ 2.4. Adding payload (lidar etc.) means scaling `motorConstant` and re-trimming `MPC_THR_HOVER` to observed hover output. The mass table lives in `flight_robot_pkg/DEBUGGING_GUIDE.md` — keep it updated.
 - A joint's `<pose>` places the joint frame, not the child link; the drone height is set by the `<pose>` **inside the include** (currently 0.35 m).
 
-`flight_robot_pkg/DEBUGGING_GUIDE.md` is the runbook: post-mortem of the five bugs that caused the original takeoff crashes, boot sanity checks, and tuning levers with real PX4 param names. `README.md` has the milestone roadmap (next: M2 ROS bridge for the hybrid, M3 ground/flight mode arbitration via Micro XRCE-DDS + px4_msgs, M4 lidar + Nav2, M5 Go2 base — deferred; the wheeled base is the flight-test proxy).
+### ROS 2 integration (M2/M3)
+
+- `px4_msgs` lives in the workspace, gitignored, **pinned to commit `431c15a`** which byte-matches PX4 main@9e90fd193f. Never `git pull` PX4-Autopilot without re-pinning — message hashes break silently (topics appear but won't decode). This PX4 versions some DDS topics: `/fmu/out/vehicle_status_v1` (suffixed), `vehicle_command`/`vehicle_land_detected` unsuffixed.
+- PX4 topics need QoS BEST_EFFORT + TRANSIENT_LOCAL (see `mode_manager.py`).
+- The Harmonic DiffDrive plugin ignores `<command_topic>`; the command topic is always the default `/model/<name>/cmd_vel`.
+- **Restart Gazebo whenever PX4 restarts**: PX4 spawns `flight_robot_${px4_instance}` and never despawns old models, so a PX4 re-run against a live world creates `flight_robot_1` and bridges pinned to `_0` go silently stale. Recover with `gz topic -l | grep cmd_vel` + `model_name:=` launch arg.
+- Wheel plumbing in the M3 stack: teleop → `/cmd_vel` → `mode_manager` (forwards only in GROUND) → `/wheel/cmd_vel` → bridge → DiffDrive. Zero Twist is published on GROUND exit because DiffDrive holds the last command.
+
+`flight_robot_pkg/DEBUGGING_GUIDE.md` is the runbook: post-mortem of the five bugs that caused the original takeoff crashes, boot sanity checks, and tuning levers with real PX4 param names. `README.md` has the milestone roadmap (next: M4 lidar + Nav2; M5 Go2 base — deferred; the wheeled base is the flight-test proxy).
 
 Workflow: commit after every verified milestone and push to GitHub (repo: `dogcopter`); commit a baseline before risky changes. Legacy SDF variants in `models/flight_robot/` (`modified.sdf`, `my_robot.sdf`, `model_hybrid_recommended.sdf`) are historical — only `model.sdf` is live.
