@@ -1,0 +1,148 @@
+<?xml version="1.0"?>
+<sdf version='1.9'>
+  <model name='flight_robot_hybrid'>
+    <!-- 
+    BETTER APPROACH: This shows how to properly combine a ground robot with a drone.
+    Key principles:
+    1. Single parent link (robot_base_footprint) for the entire system
+    2. Drone components as children with proper relative positioning
+    3. Balanced mass distribution
+    4. Proper inertial properties for the combined system
+    -->
+    
+    <link name='robot_base_footprint'>
+      <!-- 
+      Main structural body: platform that holds drone + ground payload
+      Total mass: 1.5 kg (platform structure)
+      CoM offset ensures stability during flight
+      -->
+      <inertial>
+        <pose>0 0 0.1 0 0 0</pose>
+        <mass>1.5</mass>
+        <inertia>
+          <ixx>0.125</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.125</iyy>
+          <iyz>0</iyz>
+          <izz>0.1875</izz>
+        </inertia>
+      </inertial>
+
+      <collision name='base_collision'>
+        <pose>0 0 0.2 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.6 0.4 0.2</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <visual name='base_visual'>
+        <pose>0 0 0.2 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.6 0.4 0.2</size>
+          </box>
+        </geometry>
+        <material>
+          <script>
+            <name>Gazebo/Blue</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script>
+          <diffuse>0 0 0.625 1</diffuse>
+          <ambient>0 0 0.625 1</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- Caster wheel for ground contact -->
+    <joint name='base_caster_wheel_joint' type='fixed'>
+      <pose relative_to='robot_base_footprint'>0.2 0 0.05 0 0 0</pose>
+      <parent>robot_base_footprint</parent>
+      <child>caster_wheel_link</child>
+    </joint>
+
+    <link name='caster_wheel_link'>
+      <pose relative_to='base_caster_wheel_joint'>0 0 0 0 0 0</pose>
+      <inertial>
+        <pose>0 0 0 0 0 0</pose>
+        <mass>0.15</mass>
+        <inertia>
+          <ixx>0.000125</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000125</iyy>
+          <iyz>0</iyz>
+          <izz>0.000125</izz>
+        </inertia>
+      </inertial>
+
+      <collision name='caster_wheel_collision'>
+        <geometry>
+          <sphere>
+            <radius>0.05</radius>
+          </sphere>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.1</mu>
+              <mu2>0.1</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <visual name='caster_wheel_visual'>
+        <geometry>
+          <sphere>
+            <radius>0.05</radius>
+          </sphere>
+        </geometry>
+        <material>
+          <script>
+            <name>Gazebo/Red</name>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+          </script>
+          <diffuse>0.625 0.625 0.625 1</diffuse>
+          <ambient>0.625 0.625 0.625 1</ambient>
+        </material>
+      </visual>
+    </link>
+
+    <!-- 
+    OPTION 1: Keep using x500 via include (simpler for now)
+    Pro: Less maintenance, PX4 already uses these constants
+    Con: Less control over component placement
+    -->
+    <include merge='true'>
+      <uri>model://x500</uri>
+    </include>
+
+    <!-- 
+    Joint connecting platform to drone
+    This positions the drone's base_link on top of your platform
+    The offset (0 0 0.35) puts drone 35cm above platform
+    -->
+    <joint name="robot_to_drone_joint" type="fixed">
+      <pose relative_to='robot_base_footprint'>0 0 0.35 0 0 0</pose>
+      <parent>robot_base_footprint</parent>
+      <child>base_link</child>
+    </joint>
+
+    <!-- 
+    NOTES FOR TESTING:
+    1. First test: Disable propellers in PX4 firmware, just test if model loads and sits stable
+    2. Second test: Enable propellers, give it throttle in manual mode to test thrust balance
+    3. Monitor in QGC: check attitude angles - if drone oscillates before crashing, it's stability
+    4. If it rolls uncontrollably, it's a CoM issue - increase robot mass or move drone down
+    
+    WHAT TO MEASURE:
+    - In Gazebo, check the combined model's CoM (should be near the drone's center)
+    - Monitor IMU readings (should be roughly level when sitting on ground)
+    - Watch motor command symmetry (all 4 should ramp up evenly during takeoff)
+    -->
+    
+  </model>
+</sdf>
