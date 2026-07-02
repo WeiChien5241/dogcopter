@@ -1,265 +1,127 @@
-# Dogcopter Flight & Balance Debugging Guide
+# DogCopter Flight Debugging Guide
 
-## Root Cause Analysis: Why Your Drone Crashes
+> **Status (July 2026): the takeoff crash is FIXED.** The hybrid vehicle
+> takes off, hovers stably, lands on its wheels, and can drive on the
+> ground — verified end-to-end (drive → fly → drive). This document
+> records what was actually wrong, how to run the sim, and how to tune it.
 
-### The Physics Problem
-```
-System Mass Distribution (Current):
-├─ Robot Platform: 1.5 kg at z = 0.1m (COM)
-├─ Caster Wheel:   0.15 kg at z = 0.05m
-├─ x500 Drone:     2.0 kg at z = 0.35m (COM)
-└─ TOTAL: 3.65 kg
+## What was actually wrong (post-mortem)
 
-Thrust Vector:      Applied at rotor positions (~z = 0.3-0.4m)
-Center of Gravity:  Weighted avg ≈ z = 0.24m (depends on exact geometry)
-```
+The crash was five stacked bugs, not one:
 
-**Why it crashes:**
-1. **Margin too small**: x500 motors produce ~1.5x thrust-to-weight ratio
-2. **Aerodynamic instability**: A box-shaped robot below creates drag and oscillations
-3. **Control moment mismatch**: Motors optimized for x500's CoM, not your hybrid's CoM
+1. **Thrust-to-weight ≈ 0.95 — the vehicle physically could not hover.**
+   Total mass was 3.65 kg (1.5 kg base + 0.15 kg caster + 2.0 kg x500)
+   against ~34 N of max thrust (4 × motorConstant 8.54858e-06 × 1000²).
+   `MPC_THR_HOVER 0.9` in the airframe was a symptom of this, not a fix.
+   Takeoff saturated all four motors; with zero margin left for attitude
+   control, any asymmetry became an uncorrectable tumble ("flies in
+   random directions").
 
----
+2. **Control allocation geometry was wrong.** The airframe declared
+   iris-era rotor positions (±0.13 / ±0.22 m, KM 0.05) but the x500's
+   rotors are at (±0.174, ±0.174) with momentConstant 0.016. PX4 was
+   computing roll/pitch/yaw moments for a different aircraft.
 
-## Root Cause Diagnosis: 3-Step Process
+3. **Edits to the x500 SDF were silently ignored.**
+   `simulation-gazebo.py` sets `GZ_SIM_RESOURCE_PATH=~/.simulation-gazebo/models`
+   for the gz server, so `model://x500` resolved to the *downloaded stock
+   copy* — never the copy in this package or in the PX4 tree.
 
-### Step 1: Does it have thrust?
-```bash
-# In QGC Manual mode, arm and increase throttle to 20%
-# Expected: All 4 motors spin up with similar RPM
-# Problem signs:
-#   - Only 1-2 motors spin
-#   - Motors spin but drone doesn't lift off
-#   - Erratic spinning (not smoothly increasing)
-```
+4. **Airframe ID 4002 collided with stock `4002_gz_x500_depth`.** rcS
+   matches `${SYS_AUTOSTART}_*` by glob, so which file loaded was luck.
+   Also, `PX4_GZ_MODELS` is not set automatically in standalone mode, so
+   the spawn URI could be wrong and `gz_bridge` would fail at boot
+   (this is why the vehicle sometimes ignored the GCS entirely).
 
-**If motors don't spin equally → Motor/Airframe Configuration Issue**
-**If motors spin but no lift → Insufficient Thrust-to-Weight**
+5. **The drone was never actually 0.35 m above the base.** A joint's
+   `<pose>` places the joint *frame*, not the child link; the merged
+   x500 kept its own z=0.24 model pose, leaving the rotor plane flush
+   with the box top. And with the wheels commented out, the model rested
+   tilted on the caster sphere alone.
 
-### Step 2: Check attitude stability
-```bash
-# Hover at 50% throttle (don't release sticks if unstable!)
-# Watch QGC attitude indicator
-# Expected: Roughly level, small oscillations
-# Problem signs:
-#   - Continuous pitch/roll oscillation
-#   - Oscillations growing larger (diverging)
-#   - Oscillations decaying (but crashes anyway) → too heavy
-```
+## The fixes (all in this package)
 
-**Diverging oscillation → Moment of Inertia / Rate Tuning Issue**
-**Decaying oscillation → Mass/Thrust Imbalance Issue**
+| Fix | Where |
+|---|---|
+| Include only `model://x500_base` (geometry + sensors, no tunables) with an explicit `<pose>0 0 0.35</pose>` override | `models/flight_robot/model.sdf` |
+| Motor plugins inlined, `motorConstant` 2.0e-05 → 80 N total, T/W ≈ 2.4 | `models/flight_robot/model.sdf` |
+| Base mass 1.5 → 1.0 kg (total 3.41 kg), inertia rescaled | `models/flight_robot/model.sdf` |
+| Wheels + DiffDrive restored (level stance, ground driving) | `models/flight_robot/model.sdf` |
+| Rotor geometry ±0.174/±0.174, KM ±0.016 (FLU→FRD: y sign flips vs SDF) | `airframes/4030_gz_flight_robot` |
+| Airframe renumbered 4002 → 4030 | `airframes/4030_gz_flight_robot` |
+| `MPC_THR_HOVER 0.55`, `MPC_TKO_SPEED 1.0`, `MPC_TILTMAX_AIR 25` | `airframes/4030_gz_flight_robot` |
+| `ln -sfn` in the link script (`-f` alone created a recursive self-link) | `launch/link_setup.sh` |
 
-### Step 3: Monitor sensor data
-```bash
-# Enable raw IMU telemetry in QGC
-# Hover & note:
-#   - Is IMU reporting +9.81 m/s² on Z-axis when sitting? (level check)
-#   - Do gyro rates match your stick inputs?
-#   - Check if accelerometer data is symmetric in X/Y
-```
+Observed after the fix: hover motor output ≈ 0.585 on all four motors
+(symmetric), <5 cm drift over 35 s, clean landing with auto-disarm.
 
----
-
-## Solutions by Root Cause
-
-### Solution A: If Oscillating (Feedback Control Issue)
-**Diagnosis**: Drone oscillates, but oscillations grow over 1-2 seconds, then crashes to side
-
-**Fix in PX4:**
-1. Access `Air Velocity Controller > Rate MC PITCH gain (MPC_PITCH_MC)`: **Reduce by 10%**
-2. Access `Air Velocity Controller > Rate MC ROLL gain (MPC_ROLL_MC)`: **Reduce by 10%**
-3. Test hover again
-
-**Or in SDF** (Physical fix):
-- Reduce robot mass by 0.2kg (lighter = less inertia = easier to control)
-- Increase drone height offset from 0.35m to 0.40m
-
-### Solution B: If Crashing Immediately (Thrust Issue)
-**Diagnosis**: Drone lifts slightly but falls straight down
-
-**Fix in SDF** (Fastest):
-```xml
-<!-- In model.sdf, increase robot mass reduction: -->
-<mass>1.0</mass>  <!-- Reduce from 1.5 to 1.0 kg -->
-```
-
-**Or create a lightweight version:**
-```xml
-<!-- Make the box smaller and lighter -->
-<collision name='base_collision'>
-  <pose>0 0 0.15 0 0 0</pose>
-  <geometry>
-    <box>
-      <size>0.5 0.35 0.15</size>  <!-- Smaller box -->
-    </box>
-  </geometry>
-</collision>
-<mass>0.8</mass>  <!-- Lighter mass -->
-```
-
-### Solution C: If Oscillating Asymmetrically (CoM Issue)
-**Diagnosis**: Drone tilts to one side during hover
-
-**Fix:**
-1. Check if caster wheel offset is exactly at `<pose>0.2 0 0.05...</pose>`
-2. Try moving it to center-back: `<pose>0 -0.15 0.05...</pose>`
-3. Or shift drone offset:
-```xml
-<pose relative_to='robot_base_footprint'>0.05 0 0.35 0 0 0</pose>
-```
-(Small 5cm shift forward can help)
-
----
-
-## Testing Methodology (SAFE APPROACH)
-
-### Phase 1: Ground Testing (No Flight)
-```bash
-cd ~/ros2_ws
-colcon build
-# Test 1: Model loads and sits level
-ros2 launch flight_robot_pkg simulation-gazebo.py
-# In Gazebo: Check visuals align properly, no weird offset
-# In QGC: Arm (don't thrust), check that attitude is level (~0°, ~0° roll/pitch)
-```
-
-### Phase 2: Tethered Flight (Hover Only)
-```bash
-# In QGC: Set mode to STABILIZED or ALTITUDE HOLD
-# Increase throttle slowly to 30%
-# Drone should lift off ground, hover somewhat stably
-# Don't exceed 30% - if unstable, immediate land
-```
-
-### Phase 3: Manual Flight (Low Speed)
-```bash
-# Altitude hold mode with gentle inputs
-# Test: Small pitch forward should move forward
-# Test: Roll right should move right  
-# Don't exceed 1m altitude; keep hands on killswitch
-```
-
-### Phase 4: Tuning Flight (Full Testing)
-```bash
-# Once Phase 3 is stable, increase to 2m altitude
-# Begin fine-tuning gains if needed
-```
-
----
-
-## Comparing: x500 vs Iris vs Custom Extraction
-
-| Aspect | x500 (Current) | Iris (if available) | Custom Extracted |
-|--------|---|---|---|
-| **Mass** | 2.0 kg | ~1.2 kg | Configurable |
-| **Thrust** | 15-18 N | 10-12 N | Configurable |
-| **PX4 Tuning** | Pre-tuned ✓ | Pre-tuned ✓ | Manual tuning ✗ |
-| **Flexibility** | Fixed geometry | Fixed geometry | High ✓ |
-| **Development Speed** | Fast | Fast | Slow |
-| **For Hybrid** | Good with rebalance | Better (lighter) | Best but hard |
-
-**Recommendation**: Stick with x500 for now. If oscillations persist, try lighter platforms (reduce robot mass).
-
----
-
-## Comparing: Include Merge vs Custom SDF
-
-### Option 1: Include Merge=True (Your Current)
-```xml
-<include merge='true'>
-  <uri>model://x500</uri>
-</include>
-```
-✓ Simpler
-✓ PX4 constants already tuned
-✗ Less control over component placement
-✗ Harder to visualize/debug
-
-### Option 2: Custom SDF with Extracted Components
-```xml
-<link name='base_link'>
-  <!-- Define fuselage, all props, motors from scratch -->
-  <!-- Would need to copy/reference all x500 meshes and definitions -->
-</link>
-```
-✓ Full control
-✓ Easier to debug
-�3 MUCH more work (copy 500+ lines from x500_base)
-✗ Must manually tune all parameters
-
-### Option 3: Hybrid Approach (RECOMMENDED)
-```xml
-<!-- Keep include for drone, but add external interfaces -->
-<include merge='true'>
-  <uri>model://x500</uri>
-</include>
-
-<!-- Your robot structure in this SDF -->
-<link name='robot_base_footprint'>
-  <!-- Robot body -->
-</link>
-
-<!-- Connect them -->
-<joint name='robot_to_drone_joint'>
-  <!-- Simple fixed transform -->
-</joint>
-```
-
-This is what you have now. **This is the right approach.**
-
----
-
-## PX4 Airframe Configuration
-
-Since you're using a custom model, check if you need a custom PX4 airframe:
+## How to run
 
 ```bash
-# Your airframe probably uses x500_v2 or similar
-# Location: /home/weichien241/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/
+# One-time (and after moving the workspace): create symlinks into PX4
+bash flight_robot_pkg/launch/link_setup.sh
+# No px4_sitl rebuild needed — the airframe is a shell script sourced at
+# boot through the symlinked rootfs. Rebuild only if PX4 source changes.
 
-# If your robot has significantly different CoM, you may need to adjust:
-# - COM_OFS_XY_0, COM_OFS_ZYZ_0 (Center of Mass offset)
-# - MOT_XX_YY parameters (Motor configuration)
+# Terminal 1 — Gazebo server (+GUI; add --headless on a server)
+python3 flight_robot_pkg/launch/simulation-gazebo.py --world default
+
+# Terminal 2 — PX4 SITL standalone
+cd ~/PX4-Autopilot
+PX4_GZ_STANDALONE=1 PX4_SYS_AUTOSTART=4030 PX4_SIM_MODEL=gz_flight_robot \
+PX4_GZ_MODELS=$HOME/PX4-Autopilot/Tools/simulation/gz/models \
+./build/px4_sitl_default/bin/px4
 ```
 
-For now, **test with the default x500 airframe changes** before creating a custom one.
+`PX4_GZ_MODELS` is **required**: standalone mode does not source
+`gz_env.sh`, and without it the model spawn URI is broken.
 
----
+In the pxh shell: `commander takeoff`, `commander land`.
+Without QGroundControl connected, arming is blocked by the datalink-loss
+check; either start QGC or run `param set NAV_DLL_ACT 0` (runtime only —
+don't bake it into the airframe).
 
-## Quick Test Commands
-
+Ground driving (Gazebo topic, until the ROS bridge is added):
 ```bash
-# Test 1: Check if model spawns
-gz model -m flight_robot --list-properties
-
-# Test 2: Check joint constraints
-gz model -m flight_robot -m robot_to_drone_joint --info
-
-# Test 3: Print model structure
-gz model -m flight_robot --print-model-tree
+gz topic -t /model/flight_robot_0/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.5}'
 ```
 
----
+## Sanity checks at boot
 
-## Summary: What to Do Next
+- The `LOADING CUSTOM AIRFRAME: 4030_gz_flight_robot` banner prints.
+- `param show SYS_AUTOSTART` → 4030; `param show CA_ROTOR0_PX` → 0.174.
+- No `gz_bridge` errors; model listed as `flight_robot_0` in the log.
+- Model rests **level** on two wheels + caster in Gazebo.
+- If params look stale after editing the airframe:
+  `rm ~/PX4-Autopilot/build/px4_sitl_default/rootfs/parameters*.bson`
 
-1. **Use the updated model.sdf** with:
-   - Robot mass: 1.5 kg
-   - Drone offset: 0.35m height
-   - Caster wheel: 0.15 kg
+## Tuning levers (real PX4 param names)
 
-2. **Test Phase 1**: Load in Gazebo, check visual alignment
+- **Watch thrust, not the props**: `listener actuator_motors` — hover
+  should be ~0.55–0.65 and symmetric. (`rotorVelocitySlowdownSim=10`
+  makes the visual prop speed meaningless.)
+- **Oscillating**: lower attitude gains first — `MC_ROLL_P` / `MC_PITCH_P`
+  6.5 → 5.0.
+- **Sluggish attitude**: raise rate gains — `MC_ROLLRATE_P` /
+  `MC_PITCHRATE_P` 0.15 → 0.20.
+- **Sluggish yaw** (large Izz from the wide base): raise the SDF
+  `momentConstant` AND all `CA_ROTORn_KM` **together** (e.g. both to
+  0.025) — they must stay equal or allocation is wrong.
+- **Simulating a bigger/smaller drone**: scale `motorConstant` in
+  `model.sdf` (thrust ∝ motorConstant at a given rotor speed), then
+  re-trim `MPC_THR_HOVER` to the observed hover output.
+- **Pendulum-like pitching**: reduce the include `<pose>` z (0.35 → 0.30)
+  to shrink the CoM-to-rotor-plane lever.
 
-3. **Test Phase 2**: Arm in QGC, check attitude is level
+## Mass budget (keep this updated when editing the model)
 
-4. **Test Phase 3**: Gentle hover at 30% throttle
+| Component | Mass | Height (z of CoM) |
+|---|---|---|
+| Robot base | 1.00 kg | 0.10 m |
+| Caster | 0.15 kg | 0.05 m |
+| Wheels (2×0.1) | 0.20 kg | 0.10 m |
+| x500_base + rotors | 2.06 kg | ~0.35 m |
+| **Total** | **3.41 kg** | CoM ≈ 0.22 m |
 
-5. **If crashes**: Check diagnostics above and try:
-   - Reduce robot mass to 1.0 kg
-   - Move drone offset to 0.40m
-   - Adjust caster wheel position
-
-6. **If oscillates**: Adjust PX4 gains (MPC_PITCH_MC, MPC_ROLL_MC down 10%)
-
-Would you like me to create a specific modified version of your model.sdf with any of these adjustments?
+Max thrust 80 N → T/W ≈ 2.4. If you add payload (lidar, plane mount),
+keep T/W ≥ 2.0 or scale `motorConstant` up accordingly.
