@@ -2,7 +2,7 @@
 
 ## 1. GOAL
 
-DogCopter is a university club project: a robot dog that transforms into a drone to fly over obstacles it can't walk past, then lands and walks again. The current phase is a comprehensive simulation (ROS 2 Humble + Gazebo Harmonic + PX4 SITL standalone + Nav2 later) using a wheeled "onboarding bot" base with an x500 quad on top as a stand-in for the eventual Unitree Go2 + custom drone. The immediate objective this session was: fix the crash-on-takeoff, put everything under git/GitHub, and establish the roadmap — the first two are done except the final GitHub push.
+DogCopter is a university club project: a robot dog that transforms into a drone to fly over obstacles it can't walk past, then lands and walks again. The current phase is a comprehensive simulation (ROS 2 Humble + Gazebo Harmonic + PX4 SITL standalone + Nav2 later) using a wheeled "onboarding bot" base with an x500 quad on top as a stand-in for the eventual Unitree Go2 + custom drone. The immediate objective this session was: fix the crash-on-takeoff, put everything under git/GitHub, and establish the roadmap — all done.
 
 ## 2. CURRENT STATE
 
@@ -11,16 +11,16 @@ DogCopter is a university club project: a robot dog that transforms into a drone
 - Ground driving works via the DiffDrive plugin (`gz topic` pub to cmd_vel; 0.5 m/s straight-line verified).
 - Full **drive → fly → drive** cycle verified twice in one unbroken sim session.
 
-**Git**: repo initialized at `/home/weichien241/ros2_ws/src` (branch `main`), 4 commits:
+**Git**: repo initialized at `/home/weichien241/ros2_ws/src` (branch `main`). Key commits:
 ```
+fbb3faa Add HANDOFF3.md session handoff document
 21542de Add CLAUDE.md with sim commands and PX4 integration constraints
 8d75801 Milestone 1: hybrid vehicle hovers, lands, and drives
 ebcab79 Fix hybrid flight model: thrust margin, control geometry, airframe ID
 fd24b62 Baseline: DogCopter workspace before flight fixes
 ```
 
-**BLOCKED / first thing to do**: GitHub push. `gh` v2.63.2 is installed at `~/.local/bin/gh` (in PATH; installed from the release tarball because sudo needs a password we don't have). The user chose: **public repo named `dogcopter`**. `gh auth login` is interactive — the user must run it themselves (tell them to type `! gh auth login`, GitHub.com → HTTPS → browser). Check `gh auth status`; once authenticated run:
-`gh repo create dogcopter --public --source /home/weichien241/ros2_ws/src --push`
+**GitHub**: DONE — pushed to https://github.com/WeiChien5241/dogcopter (public), `main` tracks `origin/main`. `gh` v2.63.2 lives at `~/.local/bin/gh`, authenticated as WeiChien5241. Push after every milestone: `git push`.
 
 User decisions already made this session (do not re-ask): public repo "dogcopter"; gh CLI over SSH-remote; thrust fix = scale motors up AND lighten base ("Both" option).
 
@@ -56,11 +56,10 @@ All paths relative to `/home/weichien241/ros2_ws/src` unless absolute.
 
 ## 5. NEXT STEPS (priority order)
 
-1. **Push to GitHub** (blocked on user): have user run `! gh auth login`, then `gh repo create dogcopter --public --source /home/weichien241/ros2_ws/src --push`. Verify with `git remote -v && git log origin/main --oneline`.
-2. **M2 — ROS 2 bridge for the hybrid** (small): create a bridge yaml in `flight_robot_pkg` modeled on `my_robot_bringup/config/gazebo_bridge.yaml`. Gazebo-side topics (verified live this session): `/model/flight_robot_0/cmd_vel` (gz.msgs.Twist, ROS→GZ) and `/odom` (GZ→ROS); check names with `gz topic -l` since the `_0` suffix comes from spawn instancing. Add a launch file + teleop test. Also add `flight_robot_pkg` data files (models/airframes/launch) to `setup.py` `data_files` so `colcon build` installs them (currently only resource/package.xml are listed). Commit.
-3. **M3 — Mode arbitration node** (medium): Python node in `flight_robot_pkg/flight_robot_pkg/`, GROUND/FLIGHT states switched by a ROS service. GROUND: forward `/cmd_vel` to DiffDrive, refuse arming. FLIGHT: zero wheel cmd, PX4 flies. Needs Micro XRCE-DDS agent + `px4_msgs` (`/fmu/out/vehicle_status` for state, `/fmu/in/*` if commanding offboard) — this infra is NOT set up yet; budget time. Demo: drive → take off → land → drive. Commit.
-4. **M4 — Lidar + Nav2** (medium): port the `gpu_lidar` sensor block from `my_robot_description/urdf/lidar.xacro` into the hybrid SDF (needs a lidar link + `gz::sim::systems::Sensors` plugin; remember to add its mass to the budget and check T/W), bridge `/scan`, bring up Nav2 with a diff-drive controller in GROUND mode. Commit.
-5. **M5 — Go2 base** (large, deferred): see Key Decision 6.
+1. **M2 — ROS 2 bridge for the hybrid** (small): create a bridge yaml in `flight_robot_pkg` modeled on `my_robot_bringup/config/gazebo_bridge.yaml`. Gazebo-side topics (verified live this session): `/model/flight_robot_0/cmd_vel` (gz.msgs.Twist, ROS→GZ) and `/odom` (GZ→ROS); check names with `gz topic -l` since the `_0` suffix comes from spawn instancing. Add a launch file + teleop test. Also add `flight_robot_pkg` data files (models/airframes/launch) to `setup.py` `data_files` so `colcon build` installs them (currently only resource/package.xml are listed). Commit.
+2. **M3 — Mode arbitration node** (medium): Python node in `flight_robot_pkg/flight_robot_pkg/`, GROUND/FLIGHT states switched by a ROS service. GROUND: forward `/cmd_vel` to DiffDrive, refuse arming. FLIGHT: zero wheel cmd, PX4 flies. Needs Micro XRCE-DDS agent + `px4_msgs` (`/fmu/out/vehicle_status` for state, `/fmu/in/*` if commanding offboard) — this infra is NOT set up yet; budget time. Demo: drive → take off → land → drive. Commit.
+3. **M4 — Lidar + Nav2** (medium): port the `gpu_lidar` sensor block from `my_robot_description/urdf/lidar.xacro` into the hybrid SDF (needs a lidar link + `gz::sim::systems::Sensors` plugin; remember to add its mass to the budget and check T/W), bridge `/scan`, bring up Nav2 with a diff-drive controller in GROUND mode. Commit.
+4. **M5 — Go2 base** (large, deferred): see Key Decision 6.
 
 ## 6. GOTCHAS (hard-won; do not repeat)
 
