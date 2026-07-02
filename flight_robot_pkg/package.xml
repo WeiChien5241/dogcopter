@@ -3,11 +3,19 @@
 <package format="3">
   <name>flight_robot_pkg</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>DogCopter hybrid drive-and-fly vehicle: Gazebo model, PX4 airframe, ROS 2 bridge and mode manager</description>
   <maintainer email="weichien241@gmail.com">weichien241</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
+
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>px4_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
