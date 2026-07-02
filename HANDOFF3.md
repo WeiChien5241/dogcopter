@@ -6,7 +6,11 @@ DogCopter is a university club project: a robot dog that transforms into a drone
 
 ## 2. CURRENT STATE
 
-**Milestone 1 is achieved and verified** (this session, headless sim):
+**Milestones 2 and 3 are done and verified (2026-07-02, second session).**
+- M2: `flight_robot_bridge.launch.py` bridges cmd_vel/odom/joint_states/tf/clock; teleop_twist_keyboard drives the hybrid from ROS 2 (verified: 0.5 m/s → odom advanced 3 m). This fixed the user's "can't drive with cmd_vel" issue — there was simply no bridge.
+- M3: `mode_manager` node + `flight_robot_bringup.launch.py`; drive → fly → drive commanded entirely from ROS 2 via `/dogcopter/set_flight_mode` (verified end-to-end: hover 2.47 m, teleop ignored in FLIGHT, auto-disarm on land, drove again). px4_msgs pinned to 431c15a in the workspace (gitignored). NEXT: **M4 — lidar + Nav2** (see README roadmap).
+
+**Milestone 1 was achieved and verified in the first session** (headless sim):
 - Hybrid vehicle takes off, hovers 35 s+ at 2.5 m with <5 cm drift, motor outputs symmetric at ~0.585, `commander land` touches down on wheels, auto-disarms.
 - Ground driving works via the DiffDrive plugin (`gz topic` pub to cmd_vel; 0.5 m/s straight-line verified).
 - Full **drive → fly → drive** cycle verified twice in one unbroken sim session.
